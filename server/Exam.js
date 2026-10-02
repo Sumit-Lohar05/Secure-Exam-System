@@ -29,6 +29,7 @@ const examSchema = new mongoose.Schema(
         duration: {
             type: Number,
             required: [true, 'Please specify the exam duration in minutes'],
+            min: [1, 'Exam duration must be at least 1 minute'],
         },
         accessCode: {
             type: String,
@@ -55,5 +56,11 @@ const examSchema = new mongoose.Schema(
     },
     { timestamps: true }
 );
+
+examSchema.pre('validate', function () {
+    if (this.startTime && this.endTime && new Date(this.endTime) <= new Date(this.startTime)) {
+        this.invalidate('endTime', 'End time must be after start time');
+    }
+});
 
 module.exports = mongoose.model('Exam', examSchema);

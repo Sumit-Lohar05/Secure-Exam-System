@@ -7,6 +7,8 @@ import './Profile.css'; // Dedicated profile layout styles
 
 const StudentProfile = () => {
     const [results, setResults] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
     const [viewResultDetails, setViewResultDetails] = useState(null); // State for detailed review modal
     const navigate = useNavigate();
     const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -18,10 +20,22 @@ const StudentProfile = () => {
                 setResults(res.data);
             } catch (err) {
                 console.error("Error fetching results:", err);
+                setLoadError('Your results could not be loaded. Please try again shortly.');
+            } finally {
+                setIsLoading(false);
             }
         };
         fetchResults();
     }, []);
+
+    const handleViewResult = async (resultId) => {
+        try {
+            const res = await api.get(`/exams/student/results/${resultId}`);
+            setViewResultDetails(res.data);
+        } catch (err) {
+            console.error("Error fetching result details:", err);
+        }
+    };
 
     // Calculate Profile Statistics
     const totalExams = results.length;
@@ -32,14 +46,14 @@ const StudentProfile = () => {
     return (
         <div className="student-dashboard">
             <nav className="student-navbar">
-                <h2>SecureExam Portal</h2>
+                <div className="student-brand"><span>SecureExam</span></div>
                 <div className="nav-right">
-                    <button onClick={() => navigate('/dashboard')} className="back-nav-btn">← Back to Dashboard</button>
+                    <button onClick={() => navigate('/dashboard')} className="back-nav-btn">Back to Dashboard</button>
                 </div>
             </nav>
 
             <main className="profile-dashboard">
-                <div className="profile-card">
+                <section className="profile-card">
                     <div className="profile-header">
                         <div className="profile-avatar">
                             {user.name ? user.name.charAt(0).toUpperCase() : 'S'}
@@ -49,7 +63,7 @@ const StudentProfile = () => {
                             <p>{user.email}</p>
                         </div>
                     </div>
-                </div>
+                </section>
 
                 <div className="stats-container">
                     <div className="stat-card">
@@ -62,12 +76,16 @@ const StudentProfile = () => {
                     </div>
                 </div>
 
-                <div className="profile-results-section">
-                    <h3>My Past Results</h3>
-                    {results.length === 0 ? (
+                <section className="profile-results-section">
+                    <div className="profile-section-heading"><div><p className="dashboard-eyebrow">ASSESSMENT HISTORY</p><h3>My past results</h3></div></div>
+                    {isLoading ? (
+                        <p className="empty-table-cell" role="status">Loading your results...</p>
+                    ) : loadError ? (
+                        <p className="empty-table-cell profile-error" role="alert">{loadError}</p>
+                    ) : results.length === 0 ? (
                         <p className="empty-table-cell">You have not completed any exams yet.</p>
                     ) : (
-                        <table className="preview-table">
+                        <div className="profile-table-wrap"><table className="preview-table">
                             <thead>
                                 <tr>
                                     <th>Exam Title</th>
@@ -91,7 +109,7 @@ const StudentProfile = () => {
                                             <td><span className={`score-badge ${badgeClass}`}>{percentage}%</span></td>
                                             <td>{new Date(result.createdAt).toLocaleDateString()}</td>
                                             <td>
-                                                <button className="table-review-btn" onClick={() => setViewResultDetails(result)}>
+                                                <button className="table-review-btn" onClick={() => handleViewResult(result._id)}>
                                                     View Report
                                                 </button>
                                             </td>
@@ -99,9 +117,9 @@ const StudentProfile = () => {
                                     );
                                 })}
                             </tbody>
-                        </table>
+                        </table></div>
                     )}
-                </div>
+                </section>
             </main>
 
             {/* Detailed Review Modal */}

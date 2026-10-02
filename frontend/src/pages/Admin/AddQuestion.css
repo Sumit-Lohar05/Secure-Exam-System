@@ -1,0 +1,119 @@
+.admin-wrapper:not(.dashboard-wrapper) {
+    min-height: 100vh;
+    background: var(--canvas);
+    color: var(--ink);
+}
+
+.admin-wrapper:not(.dashboard-wrapper) .admin-main {
+    width: min(100%, 1180px);
+    align-items: stretch;
+    margin: 0 auto;
+    padding: 28px clamp(16px, 4vw, 48px) 54px;
+}
+
+.admin-wrapper:not(.dashboard-wrapper) .back-link {
+    align-self: flex-start;
+    min-height: 38px;
+    margin: 0 0 18px;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--primary);
+    font: inherit;
+    font-size: .86rem;
+    font-weight: 650;
+}
+
+.admin-wrapper:not(.dashboard-wrapper) .admin-form-card,
+.admin-wrapper:not(.dashboard-wrapper) .preview-section {
+    width: 100%;
+    max-width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+    box-shadow: 0 1px 3px rgba(23, 41, 35, .05);
+}
+
+.admin-wrapper:not(.dashboard-wrapper) .admin-form-card { padding: clamp(18px, 3vw, 28px); }
+.admin-wrapper:not(.dashboard-wrapper) .authoring-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 18px; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
+.admin-wrapper:not(.dashboard-wrapper) .authoring-kicker { margin: 0 0 4px; color: var(--primary); font-size: .69rem; font-weight: 750; letter-spacing: .08em; }
+.admin-wrapper:not(.dashboard-wrapper) .admin-form-card h3 { display: block; margin: 0; padding: 0; border: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: 1.5rem; font-weight: 500; }
+.admin-wrapper:not(.dashboard-wrapper) .authoring-tools { display: flex; flex-wrap: wrap; gap: 7px; }
+.admin-wrapper:not(.dashboard-wrapper) .import-bank-btn { min-height: 38px; padding: 0 11px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-muted); color: var(--ink-soft); box-shadow: none; font-size: .8rem; font-weight: 650; }
+.admin-wrapper:not(.dashboard-wrapper) .import-bank-btn:hover { transform: none; border-color: #b7cec2; background: #eaf2ed; color: var(--ink); box-shadow: none; }
+.admin-wrapper:not(.dashboard-wrapper) .import-bank-btn.template-btn { border-color: #dfbf7c; background: #fbf2df; color: #815300; }
+.admin-wrapper:not(.dashboard-wrapper) .import-bank-btn.upload-btn { border-color: var(--primary); background: var(--primary); color: #fff; }
+.admin-wrapper:not(.dashboard-wrapper) .authoring-label { display: block; margin: 0 0 -8px; color: var(--ink-soft); font-size: .81rem; font-weight: 650; }
+.admin-wrapper:not(.dashboard-wrapper) .form-group { gap: 10px; }
+.admin-wrapper:not(.dashboard-wrapper) .admin-input { min-height: 42px; padding: 9px 11px; border: 1px solid #cbd7d0; border-radius: 4px; background: var(--surface); color: var(--ink); font: inherit; font-size: .9rem; }
+.admin-wrapper:not(.dashboard-wrapper) textarea.admin-input { min-height: 118px; resize: vertical; }
+.admin-wrapper:not(.dashboard-wrapper) .admin-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(8, 122, 97, .12); }
+.admin-wrapper:not(.dashboard-wrapper) .authoring-option-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.admin-wrapper:not(.dashboard-wrapper) .authoring-field { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: var(--muted); font-size: .77rem; font-weight: 650; }
+.admin-wrapper:not(.dashboard-wrapper) .authoring-field .admin-input { width: 100%; }
+.admin-wrapper:not(.dashboard-wrapper) .correct-ans-section { gap: 9px; padding: 14px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-muted); }
+.admin-wrapper:not(.dashboard-wrapper) .correct-ans-section label { color: var(--ink-soft); font-size: .78rem; letter-spacing: 0; }
+.admin-wrapper:not(.dashboard-wrapper) .option-selector-group { gap: 8px; }
+.admin-wrapper:not(.dashboard-wrapper) .option-btn { min-height: 40px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--ink-soft); }
+.admin-wrapper:not(.dashboard-wrapper) .option-btn:hover { border-color: #9bc9b6; background: #eaf2ed; color: var(--primary); }
+.admin-wrapper:not(.dashboard-wrapper) .option-btn.active { border-color: var(--primary); background: var(--primary); color: #fff; box-shadow: none; transform: none; }
+.admin-wrapper:not(.dashboard-wrapper) .descriptive-answer-field { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; color: var(--ink-soft); font-size: .82rem; }
+.admin-wrapper:not(.dashboard-wrapper) .btn-group-flex { gap: 8px; }
+.admin-wrapper:not(.dashboard-wrapper) .save-btn,
+.admin-wrapper:not(.dashboard-wrapper) .cancel-edit-btn { min-height: 42px; margin-top: 5px; padding: 0 14px; border: 1px solid var(--primary); border-radius: 4px; font-size: .88rem; }
+.admin-wrapper:not(.dashboard-wrapper) .save-btn { background: var(--primary); }
+.admin-wrapper:not(.dashboard-wrapper) .save-btn:hover { background: var(--primary-hover); }
+.admin-wrapper:not(.dashboard-wrapper) .cancel-edit-btn { border-color: var(--line); background: var(--surface-muted); color: var(--ink-soft); }
+.admin-wrapper:not(.dashboard-wrapper) .preview-section { margin-top: 18px; padding: 18px; }
+.admin-wrapper:not(.dashboard-wrapper) .preview-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 12px; }
+.admin-wrapper:not(.dashboard-wrapper) .preview-heading h3 { margin: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: 1.2rem; font-weight: 500; }
+.admin-wrapper:not(.dashboard-wrapper) .preview-heading span { color: var(--muted); font-size: .8rem; }
+.admin-wrapper:not(.dashboard-wrapper) .authoring-table-wrap { width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; }
+.admin-wrapper:not(.dashboard-wrapper) .preview-table { min-width: 650px; margin: 0; color: var(--ink-soft); font-size: .84rem; }
+.admin-wrapper:not(.dashboard-wrapper) .preview-table th,
+.admin-wrapper:not(.dashboard-wrapper) .preview-table td { padding: 10px 12px; border-color: var(--line); vertical-align: middle; }
+.admin-wrapper:not(.dashboard-wrapper) .preview-table th { background: var(--surface-muted); color: var(--muted); font-size: .74rem; }
+.admin-wrapper:not(.dashboard-wrapper) .action-btns-flex { flex-wrap: wrap; }
+.admin-wrapper:not(.dashboard-wrapper) .edit-mini-btn,
+.admin-wrapper:not(.dashboard-wrapper) .delete-mini { min-height: 32px; padding: 0 9px; border: 1px solid var(--line); border-radius: 4px; font-size: .78rem; }
+.admin-wrapper:not(.dashboard-wrapper) .edit-mini-btn { background: #fbf2df; color: #815300; }
+.admin-wrapper:not(.dashboard-wrapper) .delete-mini { background: #fff0ee; color: #a8322c; }
+.admin-wrapper:not(.dashboard-wrapper) .modal-overlay { padding: 16px; background: rgba(9, 24, 18, .58); backdrop-filter: none; }
+.admin-wrapper:not(.dashboard-wrapper) .question-bank-modal { width: min(900px, 100%); max-width: 900px; max-height: 90vh; padding: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.admin-wrapper:not(.dashboard-wrapper) .question-bank-modal .review-modal-header { margin: 0 0 14px; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: 1.4rem; font-weight: 500; }
+.admin-wrapper:not(.dashboard-wrapper) .question-bank-modal .authoring-label { margin-bottom: 6px; }
+.admin-wrapper:not(.dashboard-wrapper) .admin-search-input { width: min(100%, 440px); max-width: 100%; margin: 0 0 12px; }
+.admin-wrapper:not(.dashboard-wrapper) .bank-table-wrap .preview-table { min-width: 690px; }
+.admin-wrapper:not(.dashboard-wrapper) .pagination-container { gap: 12px; flex-wrap: wrap; }
+.admin-wrapper:not(.dashboard-wrapper) .page-btn { min-height: 36px; border-color: var(--line); border-radius: 4px; color: var(--ink-soft); }
+.admin-wrapper:not(.dashboard-wrapper) .page-text { color: var(--ink-soft); }
+.admin-wrapper:not(.dashboard-wrapper) .modal-actions-ext { justify-content: flex-end; }
+.admin-wrapper:not(.dashboard-wrapper) .modal-actions-ext .cancel-btn { flex: 0 0 auto; min-width: 120px; min-height: 40px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface-muted); color: var(--ink-soft); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) { background: var(--canvas); color: var(--ink); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .admin-form-card,
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .preview-section,
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .question-bank-modal { border-color: var(--line); background: var(--surface); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .admin-form-card h3,
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .preview-heading h3,
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .question-bank-modal .review-modal-header { color: var(--ink); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .admin-input { border-color: var(--line); background: #18231e; color: var(--ink); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .authoring-field,
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .authoring-label,
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .descriptive-answer-field { color: var(--ink-soft); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .correct-ans-section,
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .option-btn { border-color: var(--line); background: var(--surface-muted); color: var(--ink-soft); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .option-btn.active { border-color: var(--primary); background: var(--primary); color: #17362d; }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .preview-table th { background: var(--surface-muted); color: var(--muted); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .preview-table td { border-color: var(--line); color: var(--ink-soft); }
+body.dark-mode .admin-wrapper:not(.dashboard-wrapper) .back-link { border-color: var(--line); background: var(--surface); }
+
+@media (max-width: 700px) {
+    .admin-wrapper:not(.dashboard-wrapper) .admin-main { padding: 20px 14px 36px; }
+    .admin-wrapper:not(.dashboard-wrapper) .authoring-heading { align-items: stretch; flex-direction: column; }
+    .admin-wrapper:not(.dashboard-wrapper) .authoring-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .admin-wrapper:not(.dashboard-wrapper) .authoring-tools .import-bank-btn:last-child { grid-column: 1 / -1; }
+    .admin-wrapper:not(.dashboard-wrapper) .authoring-option-grid { grid-template-columns: 1fr; }
+    .admin-wrapper:not(.dashboard-wrapper) .preview-section { padding: 14px; }
+    .admin-wrapper:not(.dashboard-wrapper) .pagination-container { align-items: flex-start; }
+}

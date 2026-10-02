@@ -8,18 +8,157 @@ const adminMiddleware = require('./adminMiddleware');
 const validateObjectId = require('./validateObjectId');
 const sendEmail = require('./utils/sendEmail');
 
+const normalizeAccessCode = (value) => String(value ?? '').trim();
+
+const getResultStatus = (result) => {
+    if (!result) return 'In Progress';
+    if (result.status === 'Completed') return 'Completed';
+    if (result.status === 'In Progress') return 'In Progress';
+    if (Number(result.score) === -1 || result.score === undefined) return 'In Progress';
+    return 'Completed';
+};
+
+const isResultCompleted = (result) => getResultStatus(result) === 'Completed';
+
+const sanitizeExamForStudent = (exam) => {
+    if (!exam) return exam;
+    const safeExam = exam.toObject ? exam.toObject() : { ...exam };
+    safeExam.requiresAccessCode = Boolean(normalizeAccessCode(safeExam.accessCode));
+    delete safeExam.accessCode;
+
+    if (Array.isArray(safeExam.questions)) {
+        safeExam.questions = safeExam.questions.map((question) => {
+            const sanitizedQuestion = { ...question };
+            delete sanitizedQuestion.correctAnswer;
+            return sanitizedQuestion;
+        });
+    }
+
+    return safeExam;
+};
+
+const enforceStudentExamAccess = (req, exam, existingResult = null) => {
+    if (!exam || req.user.role === 'admin') {
+        return { ok: true };
+    }
+
+    if (exam.status !== 'Published') {
+        return { ok: false, status: 403, message: 'Exam is not available.' };
+    }
+
+    const now = new Date();
+    if (exam.startTime && now < new Date(exam.startTime)) {
+        return { ok: false, status: 403, message: 'Exam has not started yet.' };
+    }
+    if (exam.endTime && now > new Date(exam.endTime)) {
+        return { ok: false, status: 403, message: 'Exam has already ended.' };
+    }
+
+    const providedCode = normalizeAccessCode(req.body?.accessCode ?? req.query?.accessCode ?? '');
+    const storedCode = normalizeAccessCode(exam.accessCode);
+    if (storedCode && storedCode !== providedCode) {
+        return { ok: false, status: 401, message: 'Invalid or missing access code' };
+    }
+
+    if (existingResult && isResultCompleted(existingResult)) {
+        return { ok: false, status: 403, message: 'You have already taken this exam.' };
+    }
+
+    return { ok: true };
+};
+
+const validateAdminResultScope = (result, adminId) => {
+    if (!result) {
+        return { ok: false, status: 404, message: 'Result not found' };
+    }
+
+    const examOwner = result.examId && typeof result.examId === 'object' ? result.examId.createdBy : null;
+    if (!examOwner) {
+        return { ok: false, status: 403, message: 'Result is not associated with one of your exams.' };
+    }
+
+    if (examOwner.toString() !== adminId.toString()) {
+        return { ok: false, status: 403, message: 'You are not authorized to manage this result.' };
+    }
+
+    const totalQuestions = Number(result.totalQuestions || 0);
+    const score = Number(result.score);
+    if (Number.isFinite(score) && totalQuestions > 0 && (score < 0 || score > totalQuestions)) {
+        return { ok: false, status: 400, message: 'Result score is out of range for its exam.' };
+    }
+
+    return { ok: true };
+};
+
+const buildCompletedStudentResultFilter = (studentId, resultId) => ({
+    ...(resultId ? { _id: resultId } : {}),
+    studentId,
+    $or: [
+        { status: 'Completed' },
+        { status: { $exists: false }, score: { $ne: -1 } }
+    ]
+});
+
+const isDuplicateResultError = (error) => Boolean(
+    error?.code === 11000 && error?.keyPattern?.examId && error?.keyPattern?.studentId
+);
+
+const validateExamInput = ({ duration, startTime, endTime }) => {
+    if (duration !== undefined && (!Number.isFinite(Number(duration)) || Number(duration) < 1)) {
+        return 'Exam duration must be at least 1 minute.';
+    }
+    if (startTime && Number.isNaN(new Date(startTime).getTime())) {
+        return 'Start time must be a valid date.';
+    }
+    if (endTime && Number.isNaN(new Date(endTime).getTime())) {
+        return 'End time must be a valid date.';
+    }
+    if (startTime && endTime && new Date(endTime) <= new Date(startTime)) {
+        return 'End time must be after start time.';
+    }
+    return null;
+};
+
+const validateQuestionInput = ({ questionText, options, correctAnswer }) => {
+    if (typeof questionText !== 'string' || !questionText.trim()) {
+        return 'Question text is required.';
+    }
+    if (!Array.isArray(options)) {
+        return 'Question options must be an array.';
+    }
+    if (options.length > 0 && options.length < 2) {
+        return 'A multiple-choice question must have at least 2 options.';
+    }
+    if (typeof correctAnswer !== 'string' || !correctAnswer.trim()) {
+        return 'Correct answer is required.';
+    }
+    if (options.length > 0 && !options.includes(correctAnswer)) {
+        return 'Correct answer must match one of the question options.';
+    }
+    return null;
+};
+
 // @route   POST /api/exams
 // @desc    Create a new exam (Admins Only)
 router.post('/', authMiddleware, adminMiddleware, async (req, res) => {
     try {
         const { title, description, duration, accessCode, startTime, endTime } = req.body;
+        const validationError = validateExamInput({ duration, startTime, endTime });
+        if (validationError) return res.status(400).json({ message: validationError });
+
+        const trimmedTitle = String(title || '').trim();
+        if (!trimmedTitle) {
+            return res.status(400).json({ message: 'Exam title is required.' });
+        }
+
+        const normalizedAccessCode = normalizeAccessCode(accessCode);
         
         // Create the new exam, attaching the logged-in admin's ID as the creator
         const newExam = new Exam({
-            title,
-            description,
+            title: trimmedTitle,
+            description: description !== undefined ? String(description).trim() : '',
             duration: Number(duration) || 60,
-            accessCode: accessCode || '',
+            accessCode: normalizedAccessCode,
             startTime: startTime || null,
             endTime: endTime || null,
             createdBy: req.user.id || req.user._id, // Fallback in case JWT uses _id
@@ -39,12 +178,13 @@ router.get('/', authMiddleware, async (req, res) => {
     try {
         let query = {};
         if (req.user.role !== 'admin') {
-            query.status = 'Published'; // Hide Drafts from students at the database level
+            query.status = 'Published';
         } else {
-            query.createdBy = req.user.id || req.user._id; // Admins only see their own exams
+            query.createdBy = req.user.id || req.user._id;
         }
-        const exams = await Exam.find(query).sort({ createdAt: -1 }); // Newest first
-        res.json(exams);
+        const exams = await Exam.find(query).sort({ createdAt: -1 });
+        const responseBody = req.user.role === 'admin' ? exams : exams.map(sanitizeExamForStudent);
+        res.json(responseBody);
     } catch (err) {
         console.error("Error fetching exams:", err.message);
         res.status(500).json({ message: 'Server Error' });
@@ -56,12 +196,31 @@ router.get('/', authMiddleware, async (req, res) => {
 router.get('/student/results', authMiddleware, async (req, res) => {
     try {
         const studentId = req.user.id || req.user._id;
-        const results = await Result.find({ studentId })
-            .populate('examId', 'title questions') // Populate the exam title and questions for the review report
-            .sort({ createdAt: -1 });   // Show most recent results first
+        const results = await Result.find(buildCompletedStudentResultFilter(studentId))
+            .populate('examId', 'title')
+            .sort({ createdAt: -1 });
         res.json(results);
     } catch (err) {
         console.error("Error fetching results:", err.message);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+// @route   GET /api/exams/student/results/:resultId
+// @desc    Get detailed review data for one completed student result
+router.get('/student/results/:resultId', authMiddleware, validateObjectId('resultId'), async (req, res) => {
+    try {
+        const studentId = req.user.id || req.user._id;
+        const result = await Result.findOne(buildCompletedStudentResultFilter(studentId, req.params.resultId))
+            .populate('examId', 'title questions');
+
+        if (!result) {
+            return res.status(404).json({ message: 'Completed result not found' });
+        }
+
+        res.json(result);
+    } catch (err) {
+        console.error("Error fetching result details:", err.message);
         res.status(500).json({ message: 'Server Error' });
     }
 });
@@ -88,17 +247,32 @@ router.get('/all-results', authMiddleware, adminMiddleware, async (req, res) => 
 
 // @route   PUT /api/exams/results/:resultId/score
 // @desc    Manually update a student's score (Admins Only)
-router.put('/results/:resultId/score', authMiddleware, adminMiddleware, async (req, res) => {
+router.put('/results/:resultId/score', authMiddleware, adminMiddleware, validateObjectId('resultId'), async (req, res) => {
     try {
+        const adminId = req.user.id || req.user._id;
         const { score } = req.body;
-        const result = await Result.findByIdAndUpdate(
-            req.params.resultId,
-            { score: Number(score) },
-            { new: true } // Returns the updated document
-        );
+        const numericScore = Number(score);
+
+        if (!Number.isFinite(numericScore) || numericScore < 0) {
+            return res.status(400).json({ message: 'Score must be a non-negative number.' });
+        }
+
+        const result = await Result.findById(req.params.resultId).populate('examId');
         if (!result) {
             return res.status(404).json({ message: 'Result not found' });
         }
+
+        const scopeCheck = validateAdminResultScope(result, adminId);
+        if (!scopeCheck.ok) {
+            return res.status(scopeCheck.status).json({ message: scopeCheck.message });
+        }
+
+        if (numericScore > Number(result.totalQuestions || 0)) {
+            return res.status(400).json({ message: 'Score cannot exceed the total number of questions.' });
+        }
+
+        result.score = numericScore;
+        await result.save();
         res.json(result);
     } catch (err) {
         console.error("Error updating score:", err.message);
@@ -108,12 +282,20 @@ router.put('/results/:resultId/score', authMiddleware, adminMiddleware, async (r
 
 // @route   DELETE /api/exams/results/:resultId
 // @desc    Delete a specific student result (Admins Only)
-router.delete('/results/:resultId', authMiddleware, adminMiddleware, async (req, res) => {
+router.delete('/results/:resultId', authMiddleware, adminMiddleware, validateObjectId('resultId'), async (req, res) => {
     try {
-        const result = await Result.findByIdAndDelete(req.params.resultId);
+        const adminId = req.user.id || req.user._id;
+        const result = await Result.findById(req.params.resultId).populate('examId');
         if (!result) {
             return res.status(404).json({ message: 'Result not found' });
         }
+
+        const scopeCheck = validateAdminResultScope(result, adminId);
+        if (!scopeCheck.ok) {
+            return res.status(scopeCheck.status).json({ message: scopeCheck.message });
+        }
+
+        await Result.findByIdAndDelete(req.params.resultId);
         res.json({ message: 'Result deleted successfully' });
     } catch (err) {
         console.error("Error deleting result:", err.message);
@@ -186,6 +368,15 @@ router.post('/:id/duplicate', authMiddleware, adminMiddleware, validateObjectId(
 router.post('/:id/questions', authMiddleware, adminMiddleware, validateObjectId(), async (req, res) => {
     try {
         const { questionText, options, correctAnswer } = req.body;
+        const cleanedOptions = Array.isArray(options)
+            ? options.map((option) => typeof option === 'string' ? option.trim() : '').filter(Boolean)
+            : [];
+        const validationError = validateQuestionInput({
+            questionText: typeof questionText === 'string' ? questionText.trim() : questionText,
+            options: cleanedOptions,
+            correctAnswer: typeof correctAnswer === 'string' ? correctAnswer.trim() : correctAnswer,
+        });
+        if (validationError) return res.status(400).json({ message: validationError });
 
         // 1. Find the exam by its ID and ensure the admin owns it
         const adminId = req.user.id || req.user._id;
@@ -196,9 +387,9 @@ router.post('/:id/questions', authMiddleware, adminMiddleware, validateObjectId(
 
         // 2. Create the new question object
         const newQuestion = {
-            questionText,
-            options,
-            correctAnswer
+            questionText: questionText.trim(),
+            options: cleanedOptions,
+            correctAnswer: correctAnswer.trim()
         };
 
         // 3. Add the question to the exam's questions array and save
@@ -217,6 +408,21 @@ router.post('/:id/questions', authMiddleware, adminMiddleware, validateObjectId(
 router.post('/:id/questions/bulk', authMiddleware, adminMiddleware, validateObjectId(), async (req, res) => {
     try {
         const { questions } = req.body;
+        if (!Array.isArray(questions)) {
+            return res.status(400).json({ message: 'Questions must be an array.' });
+        }
+        for (const question of questions) {
+            const cleanedQuestion = {
+                ...(question || {}),
+                questionText: typeof question?.questionText === 'string' ? question.questionText.trim() : question?.questionText,
+                options: Array.isArray(question?.options)
+                    ? question.options.map((option) => typeof option === 'string' ? option.trim() : '').filter(Boolean)
+                    : [],
+                correctAnswer: typeof question?.correctAnswer === 'string' ? question.correctAnswer.trim() : question?.correctAnswer,
+            };
+            const validationError = validateQuestionInput(cleanedQuestion);
+            if (validationError) return res.status(400).json({ message: validationError });
+        }
         
         const adminId = req.user.id || req.user._id;
         const exam = await Exam.findOne({ _id: req.params.id, createdBy: adminId });
@@ -225,7 +431,12 @@ router.post('/:id/questions/bulk', authMiddleware, adminMiddleware, validateObje
         }
 
         // Push all imported questions into the exam document
-        exam.questions.push(...questions);
+        const cleanedQuestions = questions.map((question) => ({
+            questionText: String(question.questionText || '').trim(),
+            options: Array.isArray(question.options) ? question.options.map((option) => String(option || '').trim()).filter(Boolean) : [],
+            correctAnswer: String(question.correctAnswer || '').trim()
+        }));
+        exam.questions.push(...cleanedQuestions);
         await exam.save();
 
         res.status(201).json(exam);
@@ -250,9 +461,22 @@ router.put('/:id/questions/:questionId', authMiddleware, adminMiddleware, valida
         const question = exam.questions.id(req.params.questionId);
         if (!question) return res.status(404).json({ message: 'Question not found' });
 
-        if (questionText !== undefined) question.questionText = questionText;
-        if (options !== undefined) question.options = options;
-        if (correctAnswer !== undefined) question.correctAnswer = correctAnswer;
+        const cleanedOptions = Array.isArray(options)
+            ? options.map((option) => typeof option === 'string' ? option.trim() : '').filter(Boolean)
+            : Array.isArray(question.options)
+                ? question.options.map((option) => String(option).trim()).filter(Boolean)
+                : [];
+
+        const validationError = validateQuestionInput({
+            questionText: questionText !== undefined ? String(questionText).trim() : question.questionText,
+            options: cleanedOptions,
+            correctAnswer: correctAnswer !== undefined ? String(correctAnswer).trim() : question.correctAnswer
+        });
+        if (validationError) return res.status(400).json({ message: validationError });
+
+        if (questionText !== undefined) question.questionText = String(questionText).trim();
+        if (options !== undefined) question.options = cleanedOptions;
+        if (correctAnswer !== undefined) question.correctAnswer = String(correctAnswer).trim();
 
         await exam.save();
         res.json(exam);
@@ -266,12 +490,16 @@ router.put('/:id/questions/:questionId', authMiddleware, adminMiddleware, valida
 // @desc    Verify access code for an exam
 router.post('/:id/verify', authMiddleware, validateObjectId(), async (req, res) => {
     try {
-        const { accessCode } = req.body;
         const exam = await Exam.findById(req.params.id);
         if (!exam) return res.status(404).json({ message: 'Exam not found' });
 
-        if (exam.accessCode && exam.accessCode !== accessCode) {
-            return res.status(401).json({ message: 'Invalid access code' });
+        const studentId = req.user.id || req.user._id;
+        const existingResult = req.user.role === 'admin'
+            ? null
+            : await Result.findOne({ examId: exam._id, studentId });
+        const accessCheck = enforceStudentExamAccess(req, exam, existingResult);
+        if (!accessCheck.ok) {
+            return res.status(accessCheck.status).json({ message: accessCheck.message });
         }
         res.json({ message: 'Access granted' });
     } catch (err) {
@@ -288,40 +516,25 @@ router.get('/:id', authMiddleware, validateObjectId(), async (req, res) => {
         if (!exam) {
             return res.status(404).json({ message: 'Exam not found' });
         }
-        
-        // Security: Prevent students from accessing Drafts, enforce access code, and randomize
+
         if (req.user.role !== 'admin') {
-            if (exam.status !== 'Published') return res.status(403).json({ message: 'Exam is not available.' });
-            
-            // Schedule enforcement
-            const now = new Date();
-            if (exam.startTime && now < new Date(exam.startTime)) {
-                return res.status(403).json({ message: 'Exam has not started yet.' });
-            }
-            if (exam.endTime && now > new Date(exam.endTime)) {
-                return res.status(403).json({ message: 'Exam has already ended.' });
-            }
-
-            const providedCode = req.query.accessCode || "";
-            if (exam.accessCode && exam.accessCode !== providedCode) {
-                return res.status(401).json({ message: 'Invalid or missing access code' });
-            }
-
-            // 1. Fetch the user's progress/result document
             const studentId = req.user.id || req.user._id;
             const existingResult = await Result.findOne({ examId: exam._id, studentId });
+            const accessCheck = enforceStudentExamAccess(req, exam, existingResult);
 
-            // 2. Prevent access if they have already formally submitted it (Score is -1 for drafts)
-            if (existingResult && existingResult.score !== -1) {
-                return res.status(403).json({ message: 'You have already taken this exam.' });
+            if (!accessCheck.ok) {
+                return res.status(accessCheck.status).json({ message: accessCheck.message });
             }
 
-            const sanitizedExam = exam.toObject();
-            sanitizedExam.questions.forEach(q => delete q.correctAnswer);
-            // Shuffle questions for randomized ordering
+            const sanitizedExam = sanitizeExamForStudent(exam);
             sanitizedExam.questions = sanitizedExam.questions.sort(() => Math.random() - 0.5);
 
-            // 3. If they have a draft, attach the answers to the response
+            if (existingResult) {
+                sanitizedExam.resultStatus = getResultStatus(existingResult);
+                sanitizedExam.resultCreatedAt = existingResult.createdAt;
+                sanitizedExam.resultUpdatedAt = existingResult.updatedAt;
+            }
+
             if (existingResult && existingResult.answers) {
                 sanitizedExam.savedAnswers = existingResult.answers;
             }
@@ -346,12 +559,12 @@ router.get('/:id', authMiddleware, validateObjectId(), async (req, res) => {
 router.delete('/:id/questions/:questionId', authMiddleware, adminMiddleware, validateObjectId('id'), validateObjectId('questionId'), async (req, res) => {
     try {
         const adminId = req.user.id || req.user._id;
-        
+
         // Atomically find the exam and pull the specific question out of the array
         const exam = await Exam.findOneAndUpdate(
             { _id: req.params.id, createdBy: adminId },
             { $pull: { questions: { _id: req.params.questionId } } },
-            { new: true }
+            { new: true, returnDocument: 'after' }
         );
 
         if (!exam) {
@@ -369,14 +582,17 @@ router.delete('/:id/questions/:questionId', authMiddleware, adminMiddleware, val
 router.put('/:id/status', authMiddleware, adminMiddleware, validateObjectId(), async (req, res) => {
     try {
         const { status } = req.body;
+        if (!['Draft', 'Published'].includes(status)) {
+            return res.status(400).json({ message: 'Invalid exam status.' });
+        }
         const adminId = req.user.id || req.user._id;
         const exam = await Exam.findOne({ _id: req.params.id, createdBy: adminId });
-        
+
         if (!exam) {
             return res.status(404).json({ message: 'Exam not found or unauthorized' });
         }
         if (status === 'Published' && exam.questions.length === 0) {
-            return res.status(400).json({ message: 'Cannot publish an exam with 0 questions.' });
+            return res.status(400).json({ message: 'Cannot publish an exam with 0 questions. Add at least one valid question first.' });
         }
         exam.status = status;
         await exam.save();
@@ -393,17 +609,25 @@ router.put('/:id/status', authMiddleware, adminMiddleware, validateObjectId(), a
 router.put('/:id', authMiddleware, adminMiddleware, validateObjectId(), async (req, res) => {
     try {
         const { title, description, duration, accessCode, startTime, endTime } = req.body;
+        const validationError = validateExamInput({ duration, startTime, endTime });
+        if (validationError) return res.status(400).json({ message: validationError });
         const adminId = req.user.id || req.user._id;
         const exam = await Exam.findOne({ _id: req.params.id, createdBy: adminId });
-        
+
         if (!exam) {
             return res.status(404).json({ message: 'Exam not found or unauthorized' });
         }
 
-        if (title) exam.title = title;
-        if (description !== undefined) exam.description = description;
-        if (duration) exam.duration = duration;
-        if (accessCode !== undefined) exam.accessCode = accessCode;
+        if (title !== undefined) {
+            const trimmedTitle = String(title).trim();
+            if (!trimmedTitle) {
+                return res.status(400).json({ message: 'Exam title is required.' });
+            }
+            exam.title = trimmedTitle;
+        }
+        if (description !== undefined) exam.description = String(description).trim();
+        if (duration !== undefined) exam.duration = Number(duration) || 60;
+        if (accessCode !== undefined) exam.accessCode = normalizeAccessCode(accessCode);
         if (startTime !== undefined) exam.startTime = startTime || null;
         if (endTime !== undefined) exam.endTime = endTime || null;
 
@@ -427,6 +651,7 @@ router.delete('/:id', authMiddleware, adminMiddleware, validateObjectId(), async
             return res.status(404).json({ message: 'Exam not found or unauthorized' });
         }
 
+        await Result.deleteMany({ examId: exam._id });
         res.json({ message: 'Exam deleted successfully' });
     } catch (err) {
         console.error("Error deleting exam:", err.message);
@@ -438,18 +663,25 @@ router.delete('/:id', authMiddleware, adminMiddleware, validateObjectId(), async
 // @desc    Submit an exam and permanently save the score
 router.post('/:id/submit', authMiddleware, validateObjectId(), async (req, res) => {
     try {
-        const { answers } = req.body;
-        const studentId = req.user.id || req.user._id;
-        
-        // Security check: Make sure they haven't submitted this exam already
-        const existingResult = await Result.findOne({ examId: req.params.id, studentId });
-        if (existingResult && existingResult.score !== -1) {
-            return res.status(400).json({ message: 'You have already taken this exam.' });
+        if (req.user.role === 'admin') {
+            return res.status(403).json({ message: 'Admins cannot submit student exams.' });
         }
 
+        const { answers } = req.body;
+        const studentId = req.user.id || req.user._id;
         const exam = await Exam.findById(req.params.id);
         if (!exam) {
             return res.status(404).json({ message: 'Exam not found' });
+        }
+
+        const existingResult = await Result.findOne({ examId: req.params.id, studentId });
+        const accessCheck = enforceStudentExamAccess(req, exam, existingResult);
+        if (!accessCheck.ok) {
+            return res.status(accessCheck.status).json({ message: accessCheck.message });
+        }
+
+        if (existingResult && isResultCompleted(existingResult)) {
+            return res.status(400).json({ message: 'You have already taken this exam.' });
         }
 
         // Calculate score on the server
@@ -476,13 +708,15 @@ router.post('/:id/submit', authMiddleware, validateObjectId(), async (req, res) 
             existingResult.score = score;
             existingResult.totalQuestions = questions.length;
             existingResult.answers = finalAnswersArray;
+            existingResult.status = 'Completed';
             resultDoc = await existingResult.save();
         } else {
             resultDoc = new Result({ 
                 examId: req.params.id, 
                 studentId, 
                 score, 
-                totalQuestions: questions.length, 
+                totalQuestions: questions.length,
+                status: 'Completed',
                 answers: finalAnswersArray 
             });
             await resultDoc.save();
@@ -510,6 +744,9 @@ router.post('/:id/submit', authMiddleware, validateObjectId(), async (req, res) 
 
         res.status(201).json(resultDoc);
     } catch (err) {
+        if (isDuplicateResultError(err)) {
+            return res.status(409).json({ message: 'You have already taken this exam.' });
+        }
         console.error("Error submitting exam:", err.message);
         res.status(500).json({ message: 'Server Error' });
     }
@@ -520,35 +757,67 @@ router.post('/:id/submit', authMiddleware, validateObjectId(), async (req, res) 
 // @access  Private (Students only)
 router.post('/:id/save-progress', authMiddleware, async (req, res) => {
     try {
+        if (req.user.role === 'admin') {
+            return res.status(403).json({ message: 'Admins cannot save student exam progress.' });
+        }
+
         const { answers } = req.body;
         const examId = req.params.id;
-        const studentId = req.user.id;
+        const studentId = req.user.id || req.user._id;
 
         if (!answers) {
             return res.status(400).json({ message: 'No answers provided to save.' });
         }
 
-        // Find existing result document or create a new "In Progress" draft
+        const exam = await Exam.findById(examId);
+        if (!exam) {
+            return res.status(404).json({ message: 'Exam not found' });
+        }
+
+        const existingResult = await Result.findOne({ examId, studentId });
+        const accessCheck = enforceStudentExamAccess(req, exam, existingResult);
+        if (!accessCheck.ok) {
+            return res.status(accessCheck.status).json({ message: accessCheck.message });
+        }
+
+        if (existingResult && isResultCompleted(existingResult)) {
+            return res.status(403).json({ message: 'This exam has already been completed.' });
+        }
+
         await Result.findOneAndUpdate(
-            { examId, studentId }, // Search criteria
-            { 
-                $set: { 
+            { examId, studentId },
+            {
+                $set: {
                     answers: answers,
-                    status: 'In Progress' // Useful if your Result model tracks completion status
+                    status: 'In Progress',
+                    totalQuestions: exam.questions.length,
+                    score: -1
                 },
                 $setOnInsert: {
-                    score: -1, // Satisfies Mongoose schema without triggering a "Completed" state
-                    totalQuestions: -1 
+                    examId,
+                    studentId
                 }
             },
-            { upsert: true, new: true } // Create if it doesn't exist
+            { upsert: true, new: true, returnDocument: 'after' }
         );
 
         res.status(200).json({ message: 'Progress saved successfully.' });
     } catch (error) {
+        if (isDuplicateResultError(error)) {
+            return res.status(409).json({ message: 'Exam progress was already saved. Please continue the existing attempt.' });
+        }
         console.error("Error saving progress:", error.message);
         res.status(500).json({ message: 'Failed to save progress.' });
     }
 });
 
+router.getResultStatus = getResultStatus;
+router.sanitizeExamForStudent = sanitizeExamForStudent;
+router.enforceStudentExamAccess = enforceStudentExamAccess;
+router.validateAdminResultScope = validateAdminResultScope;
+router.validateExamInput = validateExamInput;
+router.validateQuestionInput = validateQuestionInput;
+router.isDuplicateResultError = isDuplicateResultError;
+
 module.exports = router;
+module.exports.buildCompletedStudentResultFilter = buildCompletedStudentResultFilter;

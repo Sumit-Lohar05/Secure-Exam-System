@@ -60,9 +60,11 @@ const Login = () => {
                 <img src={logo} alt="SecureExam Logo" className="form-logo" />
                 <h1>Portal Login</h1>
                 {error && <p className="error-message" style={{ color: "red", marginBottom: "10px" }}>{error}</p>}
+                <label className="auth-field-label" htmlFor="login-email">Email address</label>
                 <input 
+                    id="login-email"
                     type="email" 
-                    placeholder="Email Address" 
+                    placeholder="name@example.com" 
                     value={email}
                     onChange={(e) => {
                         setEmail(e.target.value);
@@ -70,9 +72,11 @@ const Login = () => {
                     }} 
                     required 
                 />
+                <label className="auth-field-label" htmlFor="login-password">Password</label>
                 <input 
+                    id="login-password"
                     type="password" 
-                    placeholder="Password" 
+                    placeholder="Enter your password" 
                     value={password}
                     onChange={(e) => {
                         setPassword(e.target.value);
@@ -80,22 +84,25 @@ const Login = () => {
                     }} 
                     required 
                 />
-               <p 
-                    className="forgot-password-link" 
+                <button
+                    type="button"
+                    className="forgot-password-link"
                     onClick={() => navigate("/forgot-password")}
-                    style={{ textAlign: "right", marginTop: "-10px", marginBottom: "15px", cursor: "pointer", color: "#3498db", fontSize: "0.9rem" }}
                 >
                     Forgot Password?
-                </p>
-                <button type="submit" disabled={loading} style={{ cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
+                </button>
+                <button className="login-submit-btn" type="submit" disabled={loading} style={{ cursor: loading ? "not-allowed" : "pointer", opacity: loading ? 0.7 : 1 }}>
                     {loading ? "Logging in..." : "Login"}
                 </button>
-                <p 
-                    className="register-link" 
-                    onClick={() => navigate("/register")}
-                    style={{ marginTop: "15px", cursor: "pointer", color: "#3498db" }}
-                >
-                    Don't have an account? Register here
+                <p className="login-footer">
+                    <span>Don't have an account?</span>
+                    <button
+                        type="button"
+                        className="register-link"
+                        onClick={() => navigate("/register")}
+                    >
+                        Register here
+                    </button>
                 </p>
             </form>
         </div>

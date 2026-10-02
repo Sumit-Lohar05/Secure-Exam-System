@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import api from '../api/axios';
 import toast from 'react-hot-toast';
@@ -33,12 +33,7 @@ const ExamRoom = () => {
 
     const tabViolationsRef = useRef(tabViolations);
 
-    // Check for full screen presence on mount (e.g. after a hard refresh)
-    useEffect(() => {
-        if (!document.fullscreenElement) {
-            setIsFullScreen(false);
-        }
-    }, []);
+    const accessCode = useMemo(() => new URLSearchParams(location.search).get('accessCode') || '', [location.search]);
 
     // Fetch exam data on component mount
     useEffect(() => {
@@ -46,8 +41,11 @@ const ExamRoom = () => {
             // Pre-check: Bounce the user out if they have already taken this exam
             try {
                 const resultsRes = await api.get('/exams/student/results');
-                const hasTaken = resultsRes.data.some(res => (res.examId?._id || res.examId) === examId);
-                if (hasTaken) {
+                const hasCompletedAttempt = resultsRes.data.some(res => {
+                    const resultStatus = res.status || (Number(res.score) !== -1 ? 'Completed' : 'In Progress');
+                    return (res.examId?._id || res.examId) === examId && resultStatus === 'Completed';
+                });
+                if (hasCompletedAttempt) {
                     toast.error("You have already completed this exam!");
                     navigate('/dashboard');
                     return;
@@ -55,10 +53,8 @@ const ExamRoom = () => {
             } catch (err) {
                 console.error("Error checking attempt:", err);
             }
-            const queryParams = new URLSearchParams(location.search);
-            const accessCode = queryParams.get("accessCode") || "";
             try {
-                const res = await api.get(`/exams/${examId}?accessCode=${encodeURIComponent(accessCode)}`);                
+                const res = await api.get(`/exams/${examId}?accessCode=${encodeURIComponent(accessCode)}`);
                 // Randomly shuffle options for each question (Only if options exist)
                 const shuffledExam = {
                     ...res.data,
@@ -90,9 +86,23 @@ const ExamRoom = () => {
                     const secondsUntilEnd = Math.floor((new Date(shuffledExam.endTime).getTime() - Date.now()) / 1000);
                     initialTimeLeft = Math.min(initialTimeLeft, Math.max(0, secondsUntilEnd));
                 }
+
+                const existingDraftStatus = res.data.resultStatus;
+                const hasExistingDraft = existingDraftStatus === 'In Progress' || Object.keys(dbAnswersMap).length > 0;
                 
-                // If they accidentally reloaded, strictly enforce their previous exact target end time!
-                if (sessionStorage.getItem(`exam_started_${examId}`) === 'true') {
+                // If they already have a saved draft, resume the same attempt instead of forcing a fresh start.
+                if (hasExistingDraft) {
+                    const createdAt = res.data.resultCreatedAt ? new Date(res.data.resultCreatedAt).getTime() : Date.now();
+                    const elapsedSeconds = Math.max(0, Math.floor((Date.now() - createdAt) / 1000));
+                    const draftRemaining = Math.max(0, shuffledExam.duration * 60 - elapsedSeconds);
+                    const resumedTimeLeft = Math.min(initialTimeLeft, draftRemaining);
+
+                    targetEndTime.current = Date.now() + (resumedTimeLeft * 1000);
+                    sessionStorage.setItem(`exam_endtime_${examId}`, targetEndTime.current);
+                    sessionStorage.setItem(`exam_started_${examId}`, 'true');
+                    setHasAgreed(true);
+                    setTimeLeft(resumedTimeLeft);
+                } else if (sessionStorage.getItem(`exam_started_${examId}`) === 'true') {
                     const savedEndTime = sessionStorage.getItem(`exam_endtime_${examId}`);
                     if (savedEndTime) {
                         targetEndTime.current = parseInt(savedEndTime, 10);
@@ -113,18 +123,17 @@ const ExamRoom = () => {
             }
         };
         fetchExam();
-    }, [examId, navigate]);
+    }, [accessCode, examId, navigate, location.search]);
 
     // Derive questions from exam state
-    const questions = exam?.questions || [];
-    
+    const questions = useMemo(() => exam?.questions || [], [exam]);
 
     // Calculate summary stats
-    const answeredCount = Object.values(answersRef.current).filter(ans => ans !== undefined && ans.toString().trim() !== "").length;
+    const answeredCount = Object.values(answers).filter(ans => ans !== undefined && ans.toString().trim() !== "").length;
     const flaggedCount = flaggedQuestions.length;
     const remainingCount = questions.length - answeredCount;
 
-    const handleSubmit = async (isAutoSubmit = false) => {
+    const handleSubmit = useCallback(async (isAutoSubmit = false) => {
         if (submitLock.current) return;
         submitLock.current = true;
         setIsSubmitting(true);
@@ -139,7 +148,8 @@ const ExamRoom = () => {
         
         try {
             const res = await api.post(`/exams/${examId}/submit`, {
-                answers: answersMap
+                answers: answersMap,
+                accessCode
             });
             setScore(res.data.score); // Use the score returned by the server
             setIsSubmitted(true);
@@ -158,7 +168,7 @@ const ExamRoom = () => {
                 setIsSubmitting(false);
             }
         }
-    };
+    }, [accessCode, examId, questions]);
 
     // Handle option change
     const handleOptionChange = (option) => {
@@ -190,20 +200,23 @@ const ExamRoom = () => {
     useEffect(() => {
         if (!hasAgreed) return; // Don't run timer if not agreed yet
         if (timeLeft <= 0) {
-            if(exam && !isSubmitted && !submitLock.current){
-                handleSubmit(true);
-            }
             return;
         }
+
         const timer = setInterval(() => {
-            if (targetEndTime.current) {
-                setTimeLeft(Math.max(0, Math.floor((targetEndTime.current - Date.now()) / 1000)));
-            } else {
-                setTimeLeft(prev => prev - 1);
+            const nextValue = targetEndTime.current
+                ? Math.max(0, Math.floor((targetEndTime.current - Date.now()) / 1000))
+                : Math.max(0, timeLeft - 1);
+
+            setTimeLeft(nextValue);
+
+            if (nextValue <= 0 && exam && !isSubmitted && !submitLock.current) {
+                handleSubmit(true);
             }
         }, 1000);
+
         return () => clearInterval(timer);
-    }, [timeLeft, exam, isSubmitted, hasAgreed]);
+    }, [timeLeft, exam, isSubmitted, hasAgreed, handleSubmit]);
 
     // Anti-Cheat: Prevent Tab Switching
     useEffect(() => {
@@ -279,7 +292,7 @@ const ExamRoom = () => {
             document.removeEventListener("contextmenu", preventCopyPaste);
             document.removeEventListener("keydown", preventDevTools);
         };
-    }, [isSubmitted, exam, hasAgreed]); 
+    }, [isSubmitted, exam, hasAgreed, examId, handleSubmit]); 
 
     // Auto-Save Progress every 1 minute
     useEffect(() => {
@@ -298,8 +311,10 @@ const ExamRoom = () => {
             if (Object.keys(answersMap).length === 0) return;
 
             try {
-                // Silently send current answers to the server
-                await api.post(`/exams/${examId}/save-progress`, { answers: answersMap });
+                await api.post(`/exams/${examId}/save-progress`, {
+                    answers: answersMap,
+                    accessCode
+                });
             } catch (err) {
                 console.error("Auto-save failed:", err);
             }
@@ -308,7 +323,7 @@ const ExamRoom = () => {
         const intervalId = setInterval(autoSave, 60000); // 60,000 ms = 1 minute
 
         return () => clearInterval(intervalId);
-    }, [isSubmitted, exam, questions, examId, hasAgreed]);
+    }, [isSubmitted, exam, questions, examId, hasAgreed, accessCode, handleSubmit]);
 
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
@@ -346,7 +361,7 @@ const ExamRoom = () => {
 
     // Loading state
     if (!exam) {
-        return <div className="loading-screen">Loading...</div>;
+        return <div className="loading-screen" role="status"><span className="loading-indicator" />Loading exam...</div>;
     }
 
     // Result Screen
@@ -384,13 +399,14 @@ const ExamRoom = () => {
     // Instructions Blocker Screen
     if (!hasAgreed) {
         return (
-            <div className="exam-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', padding: '20px' }}>
-                <div className="result-card" style={{ maxWidth: '700px', textAlign: 'left', padding: '40px', width: '100%' }}>
-                    <h2 style={{ marginBottom: '20px', borderBottom: '2px solid #3498db', paddingBottom: '10px' }}>Exam Instructions & Rules</h2>
+            <div className="exam-container exam-gate">
+                <div className="result-card instructions-card">
+                    <p className="exam-kicker">BEFORE YOU BEGIN</p>
+                    <h2 className="gate-title">Exam instructions</h2>
                     
-                    <div style={{ marginBottom: '20px', fontSize: '1.05rem', lineHeight: '1.6' }}>
-                        <p style={{ marginBottom: '15px' }}>Welcome to <strong>{exam.title}</strong>. Please read the following instructions carefully before starting the exam:</p>
-                        <ul style={{ paddingLeft: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div className="instructions-copy">
+                        <p>Welcome to <strong>{exam.title}</strong>. Review these requirements before starting:</p>
+                        <ul>
                             <li><strong>Full-Screen Mode:</strong> The exam requires full-screen mode. Do not exit full-screen during the exam.</li>
                             <li><strong>Tab Switching & Minimizing:</strong> Do not switch tabs, minimize the browser, or open other applications. Doing so will trigger an anti-cheat warning.</li>
                             <li><strong>Developer Tools & Shortcuts:</strong> Using Developer Tools (F12), right-click, or keyboard shortcuts like <code>Ctrl+R</code> or <code>F5</code> is strictly prohibited.</li>
@@ -399,25 +415,23 @@ const ExamRoom = () => {
                         </ul>
                     </div>
 
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '1.05rem', cursor: 'pointer', padding: '15px', backgroundColor: 'rgba(0,0,0,0.05)', borderRadius: '8px', border: '1px solid rgba(0,0,0,0.1)', marginBottom: '25px' }}>
+                    <label className="rules-agreement">
                         <input 
                             type="checkbox" 
                             checked={agreedChecked} 
                             onChange={(e) => setAgreedChecked(e.target.checked)} 
-                            style={{ width: '20px', height: '20px', cursor: 'pointer' }}
                         />
                         <strong>I have read and agree to follow all instructions and rules.</strong>
                     </label>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <button onClick={handleReturnToDashboard} className="cancel-btn" style={{ padding: '12px 25px', fontSize: '1.05rem', border: '1px solid #ccc', cursor: 'pointer', borderRadius: '6px' }}>
+                    <div className="gate-actions">
+                        <button onClick={handleReturnToDashboard} className="cancel-btn">
                             Cancel
                         </button>
                         <button 
                             onClick={handleStart} 
                             disabled={!agreedChecked}
                             className="confirm-btn" 
-                            style={{ padding: '12px 25px', fontSize: '1.05rem', opacity: agreedChecked ? 1 : 0.6, cursor: agreedChecked ? 'pointer' : 'not-allowed', backgroundColor: '#2ecc71', color: 'white', border: 'none', borderRadius: '6px', fontWeight: 'bold' }}
                         >
                             Start Exam
                         </button>
@@ -430,9 +444,9 @@ const ExamRoom = () => {
     // Handle exited full screen
     if (!isFullScreen && !isSubmitted && questions.length > 0) {
         return (
-            <div className="exam-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', backgroundColor: 'var(--toast-bg, #1e293b)', color: 'var(--toast-text, #f8fafc)', flexDirection: 'column', textAlign: 'center', padding: '20px' }}>
-                <h2 style={{ color: '#ef4444', marginBottom: '15px' }}>⚠️ Full Screen Required</h2>
-                <p style={{ fontSize: '1.1rem', marginBottom: '25px', maxWidth: '500px' }}>
+            <div className="exam-container fullscreen-required">
+                <h2>Full-screen required</h2>
+                <p>
                     Your browser has exited full-screen mode. To maintain exam integrity, you must remain in full-screen mode at all times.
                 </p>
                 <button 
@@ -448,7 +462,6 @@ const ExamRoom = () => {
                         }
                     }} 
                     className="start-exam-btn"
-                    style={{ padding: '15px 30px', fontSize: '1.1rem', maxWidth: '250px' }}
                 >
                     Resume Exam
                 </button>
@@ -463,8 +476,8 @@ const ExamRoom = () => {
                 <div className="header-left">
                     <span className="breadcrumb">{exam.title}</span>
                 </div>
-                <div className="exam-timer">Time Remaining: {formatTime(timeLeft)}</div>
-                <button className="submit-btn" onClick={() => setShowModal(true)}>Finish Exam</button>
+                <div className={`exam-timer ${timeLeft <= 300 ? 'urgent' : ''}`} role="timer" aria-label={`Time remaining ${formatTime(timeLeft)}`}>{formatTime(timeLeft)}</div>
+                <button className="submit-btn" onClick={() => setShowModal(true)} disabled={isSubmitting}>Finish Exam</button>
             </header>
 
             <div className="exam-body">
@@ -479,7 +492,7 @@ const ExamRoom = () => {
                                 {flaggedQuestions.includes(currentQuestion) ? "Flagged" : "Flag for Review"}
                             </button>
                         </div>
-                        <h2>{questions[currentQuestion].questionText}</h2>
+                        <h2 className="question-prompt">{questions[currentQuestion].questionText}</h2>
                         
                         {questions[currentQuestion].options && questions[currentQuestion].options.length > 0 ? (
                             <div className="options-list">
@@ -501,14 +514,15 @@ const ExamRoom = () => {
                                 ))}
                             </div>
                         ) : (
-                            <div className="options-list" style={{ padding: "10px 0" }}>
+                            <div className="options-list text-answer-wrap">
                                 <input 
                                     type="text" 
                                     placeholder="Type your answer here..."
-                                    style={{ width: "100%", padding: "15px", fontSize: "1rem", borderRadius: "8px", border: "1px solid #bdc3c7", outline: "none" }}
+                                    className="text-answer"
                                     value={answers[currentQuestion] || ""}
                                     onChange={(e) => handleOptionChange(e.target.value)}
                                     autoComplete="off"
+                                    aria-label="Your answer"
                                 />
                             </div>
                         )}
@@ -534,15 +548,18 @@ const ExamRoom = () => {
                             let statusClass = "";
                             if(currentQuestion === i) statusClass = "current";
                             else if(flaggedQuestions.includes(i)) statusClass = "flagged";
-                            else if(answersRef.current[i] && answersRef.current[i].toString().trim() !== "") statusClass = "answered";
+                            else if(answers[i] && answers[i].toString().trim() !== "") statusClass = "answered";
                             return(
-                                <div 
+                                <button 
+                                    type="button"
                                     key={i} 
                                     className={`num-item ${statusClass}`}
                                     onClick={() => setCurrentQuestion(i)}
+                                    aria-label={`Question ${i + 1}${statusClass ? `, ${statusClass}` : ', not answered'}`}
+                                    aria-current={currentQuestion === i ? 'step' : undefined}
                                 >
                                     {i + 1}
-                                </div>
+                                </button>
                             );    
                         })}
                     </div>
@@ -557,9 +574,9 @@ const ExamRoom = () => {
                 </aside>
             </div>
             {showModal && (
-                <div className="modal-overlay">
-                    <div className="modal-content">
-                        <h2>Submit Exam?</h2>
+                <div className="modal-overlay" role="presentation">
+                    <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="submit-dialog-title">
+                        <h2 id="submit-dialog-title">Submit exam?</h2>
                         <p>Are you sure you want to submit your exam? Please review your answers before submitting.</p>
                         <div className="summary-stats">
                             <div className="stat">Total Questions: <strong>{questions.length}</strong></div>

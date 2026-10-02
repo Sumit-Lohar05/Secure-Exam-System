@@ -8,14 +8,84 @@ const sendEmail = require('./utils/sendEmail');
 const authMiddleware = require('./authMiddleware');
 const adminMiddleware = require('./adminMiddleware');
 
+const serializeAdminUser = (user) => ({
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    isVerified: user.isVerified,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+});
+
+const createRateLimiter = ({ windowMs = 60000, maxRequests = 5, keyBuilder } = {}) => {
+    const store = new Map();
+
+    return {
+        allow(req) {
+            const key = keyBuilder ? keyBuilder(req) : (req.ip || req.headers['x-forwarded-for'] || 'unknown');
+            const now = Date.now();
+            const current = store.get(key);
+
+            if (!current || current.resetAt <= now) {
+                store.set(key, { count: 1, resetAt: now + windowMs });
+                return true;
+            }
+
+            if (current.count >= maxRequests) {
+                return false;
+            }
+
+            current.count += 1;
+            return true;
+        }
+    };
+};
+
+const getRequiredEnv = (name) => {
+    const value = process.env[name];
+    if (!value || !String(value).trim()) {
+        throw new Error(`${name} is not configured.`);
+    }
+    return value.replace(/\/$/, '');
+};
+
+const getFrontendUrl = () => getRequiredEnv('FRONTEND_URL');
+const buildResetUrl = (token) => `${getFrontendUrl()}/reset-password/${token}`;
+
 const router = express.Router();
+const ipRateLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 5 });
+const emailRateLimiter = createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    maxRequests: 3,
+    keyBuilder: (req) => `email:${String(req.body?.email || '').trim().toLowerCase()}`
+});
+const resetRequestLimiter = createRateLimiter({
+    windowMs: 60 * 60 * 1000,
+    maxRequests: 3,
+    keyBuilder: (req) => `ip:${req.ip || req.headers['x-forwarded-for'] || 'unknown'}`
+});
+
+const enforceAuthRateLimit = (req, res) => {
+    const ipAllowed = ipRateLimiter.allow(req);
+    const emailAllowed = emailRateLimiter.allow(req);
+
+    if (!ipAllowed || !emailAllowed) {
+        res.status(429).json({ message: 'Too many attempts. Please try again later.' });
+        return false;
+    }
+
+    return true;
+};
 
 // @route   GET /api/auth/users
 // @desc    Get all users (Admins Only)
 router.get('/users', authMiddleware, adminMiddleware, async (req, res) => {
     try {
-        const users = await User.find().select('-password').sort({ createdAt: -1 });
-        res.json(users);
+        const users = await User.find()
+            .select('name email role isVerified createdAt updatedAt')
+            .sort({ createdAt: -1 });
+        res.json(users.map(serializeAdminUser));
     } catch (err) {
         console.error(err.message);
         res.status(500).send('Server error');
@@ -66,6 +136,10 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, async (req, res) =>
 // @desc    Register a new user
 router.post('/register', async (req, res) => {
     try {
+        if (!enforceAuthRateLimit(req, res)) {
+            return;
+        }
+
         const { name, email, password, role, adminSecret } = req.body;
 
         // Security Check: Require a valid secret key to register as an admin
@@ -133,6 +207,10 @@ router.post('/register', async (req, res) => {
 // @desc    Resend OTP to unverified user
 router.post('/resend-otp', async (req, res) => {
     try {
+        if (!enforceAuthRateLimit(req, res)) {
+            return;
+        }
+
         const { email } = req.body;
         const user = await User.findOne({ email });
 
@@ -171,6 +249,10 @@ router.post('/resend-otp', async (req, res) => {
 // @desc    Verify user email with OTP
 router.post('/verify-otp', async (req, res) => {
     try {
+        if (!enforceAuthRateLimit(req, res)) {
+            return;
+        }
+
         const { email, otp } = req.body;
 
         if (!email || !otp) {
@@ -206,6 +288,10 @@ router.post('/verify-otp', async (req, res) => {
 // @desc    Authenticate user & get token
 router.post('/login', async (req, res) => {
     try {
+        if (!enforceAuthRateLimit(req, res)) {
+            return;
+        }
+
         const { email, password } = req.body;
 
         // 1. Check if user exists
@@ -253,9 +339,13 @@ router.post('/login', async (req, res) => {
 // @desc    Send password reset email
 router.post('/forgot-password', async (req, res) => {
     try {
+        if (!resetRequestLimiter.allow(req)) {
+            return res.status(429).json({ message: 'Too many password reset requests. Please try again later.' });
+        }
+
         const user = await User.findOne({ email: req.body.email });
         if (!user) {
-            return res.status(404).json({ message: 'There is no user registered with that email address.' });
+            return res.status(200).json({ message: 'If this email is registered, a password reset link will be sent.' });
         }
 
         // Get reset token
@@ -264,8 +354,8 @@ router.post('/forgot-password', async (req, res) => {
         // Save the hashed token and expiration to the database
         await user.save({ validateBeforeSave: false });
 
-        // Create reset URL (pointing to your React frontend, assuming it runs on port 5173)
-        const resetUrl = `http://localhost:5173/reset-password/${resetToken}`;
+        // Create reset URL from the configured frontend origin.
+        const resetUrl = buildResetUrl(resetToken);
 
         const message = `
             <div style="font-family: Arial, sans-serif; color: #333; line-height: 1.6;">
@@ -280,8 +370,9 @@ router.post('/forgot-password', async (req, res) => {
 
         try {
             await sendEmail({ email: user.email, subject: 'SecureExam Password Reset', message });
-            res.status(200).json({ message: 'Password reset email sent successfully.' });
+            res.status(200).json({ message: 'If this email is registered, a password reset link will be sent.' });
         } catch (err) {
+            console.error('Password reset email failed:', err.message);
             // If the email fails to send, clear the token from the DB so it can't be exploited
             user.resetPasswordToken = undefined;
             user.resetPasswordExpire = undefined;
@@ -298,6 +389,10 @@ router.post('/forgot-password', async (req, res) => {
 // @desc    Verify token and reset password
 router.put('/reset-password/:token', async (req, res) => {
     try {
+        if (!resetRequestLimiter.allow(req)) {
+            return res.status(429).json({ message: 'Too many reset attempts. Please try again later.' });
+        }
+
         // Re-hash the raw token from the URL to compare it with the hashed token in the database
         const resetPasswordToken = crypto.createHash('sha256').update(req.params.token).digest('hex');
 
@@ -320,4 +415,9 @@ router.put('/reset-password/:token', async (req, res) => {
     }
 });
 
+router.createRateLimiter = createRateLimiter;
+router.buildResetUrl = buildResetUrl;
+router.getApiBaseUrl = () => getRequiredEnv('API_BASE_URL');
+
 module.exports = router;
+module.exports.serializeAdminUser = serializeAdminUser;

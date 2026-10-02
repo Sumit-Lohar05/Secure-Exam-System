@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from '../../api/axios';
 import toast from 'react-hot-toast';
+import Papa from 'papaparse';
 import "./Admin.css";
 import "./AdminExtended.css";
+import "./AddQuestion.css";
 
 const AddQuestion = () => {
     const { examId } = useParams();
@@ -35,7 +37,7 @@ const AddQuestion = () => {
             try {
                 const res = await api.get(`/exams/${examId}`);
                 setQuestionsList(res.data.questions || []);
-            } catch (err) {
+            } catch {
                 console.log("No questions found for this exam yet.");
             }
         };
@@ -133,49 +135,24 @@ const AddQuestion = () => {
         reader.onload = async (event) => {
             try {
                 const text = event.target.result;
-                const lines = text.split('\n');
-                const newQuestions = [];
-
-                // Skip the header (index 0)
-                for (let i = 1; i < lines.length; i++) {
-                    const line = lines[i].trim();
-                    if (!line) continue;
-
-                    // Custom split to ignore commas inside quotes
-                    const rowParts = [];
-                    let insideQuotes = false;
-                    let currentPart = '';
-                    for (let char of line) {
-                        if (char === '"') insideQuotes = !insideQuotes;
-                        else if (char === ',' && !insideQuotes) { rowParts.push(currentPart); currentPart = ''; }
-                        else currentPart += char;
-                    }
-                    rowParts.push(currentPart);
-
-                    const cleanPart = (str) => str ? str.replace(/^"|"$/g, '').trim() : '';
-                    
-                    const qText = cleanPart(rowParts[0]);
-                    const optA = cleanPart(rowParts[1]);
-                    const optB = cleanPart(rowParts[2]);
-                    const optC = cleanPart(rowParts[3]);
-                    const optD = cleanPart(rowParts[4]);
-                    const correct = cleanPart(rowParts[5]);
-
-                    // Valid row must have at least a question and an answer
-                    if (qText && correct) {
-                        const options = [];
-                        if (optA) options.push(optA);
-                        if (optB) options.push(optB);
-                        if (optC) options.push(optC);
-                        if (optD) options.push(optD);
-
-                        newQuestions.push({
-                            questionText: qText,
-                            options: options,
-                            correctAnswer: correct
-                        });
-                    }
+                const parsed = Papa.parse(text, {
+                    skipEmptyLines: 'greedy'
+                });
+                if (parsed.errors.length > 0) {
+                    throw new Error(parsed.errors[0].message);
                 }
+
+                const newQuestions = parsed.data.slice(1).reduce((questions, row) => {
+                    const [qText, optA, optB, optC, optD, correct] = row.map((value) => String(value || '').trim());
+                    if (!qText || !correct) return questions;
+
+                    questions.push({
+                        questionText: qText,
+                        options: [optA, optB, optC, optD].filter(Boolean),
+                        correctAnswer: correct
+                    });
+                    return questions;
+                }, []);
 
                 if (newQuestions.length === 0) {
                     toast.error("No valid questions found in the CSV. Please check the template.");
@@ -218,11 +195,30 @@ const AddQuestion = () => {
                 finalCorrectAnswer = questionData.descriptive_answer.trim();
             }
 
+            const sanitizedOptions = optionsArray
+                .map((option) => typeof option === 'string' ? option.trim() : '')
+                .filter(Boolean);
+
+            if (questionType === 'mcq' && sanitizedOptions.length < 2) {
+                toast.error('Please enter at least 2 valid answer options before saving.');
+                return;
+            }
+
             const payload = {
-                questionText: questionData.question_text,
-                options: optionsArray,
-                correctAnswer: finalCorrectAnswer
+                questionText: (questionData.question_text || '').trim(),
+                options: questionType === 'mcq' ? sanitizedOptions : [],
+                correctAnswer: (finalCorrectAnswer || '').trim()
             };
+
+            if (!payload.questionText) {
+                toast.error('Question text is required.');
+                return;
+            }
+
+            if (!payload.correctAnswer) {
+                toast.error('Please provide a valid correct answer.');
+                return;
+            }
 
             if (editQuestionId) {
                 const res = await api.put(`/exams/${examId}/questions/${editQuestionId}`, payload);
@@ -237,6 +233,7 @@ const AddQuestion = () => {
             }
         } catch (err) {
             console.error("Error saving question", err);
+            toast.error(err.response?.data?.message || "Failed to save question.");
         }
     };
     // Delete question handler
@@ -272,19 +269,22 @@ const AddQuestion = () => {
     return (
         <div className="admin-wrapper">
             <main className="admin-main">
-                <span className="back-link" onClick={() => navigate("/admin/dashboard")}>
+                <button type="button" className="back-link" onClick={() => navigate("/admin/dashboard")}>
                     ← Back to Dashboard
-                </span>
+                </button>
                 
                 <div className="admin-form-card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                        <h3 style={{ margin: 0 }}>{editQuestionId ? "Edit Question" : "Add New Question"}</h3>
-                        <div style={{ display: 'flex', gap: '10px' }}>
-                            <button type="button" className="import-bank-btn" onClick={downloadCSVTemplate} style={{ backgroundColor: '#f39c12' }} title="Download an Excel-friendly CSV layout">
+                    <div className="authoring-heading">
+                        <div>
+                            <p className="authoring-kicker">QUESTION AUTHORING</p>
+                            <h3>{editQuestionId ? "Edit Question" : "Add New Question"}</h3>
+                        </div>
+                        <div className="authoring-tools">
+                            <button type="button" className="import-bank-btn template-btn" onClick={downloadCSVTemplate} title="Download an Excel-friendly CSV layout">
                                 CSV Template
                             </button>
                             <input type="file" id="csv-upload" accept=".csv" style={{ display: 'none' }} onChange={handleCSVUpload} />
-                            <button type="button" className="import-bank-btn" onClick={() => document.getElementById('csv-upload').click()} style={{ backgroundColor: '#2980b9' }} title="Upload questions from a CSV file">
+                            <button type="button" className="import-bank-btn upload-btn" onClick={() => document.getElementById('csv-upload').click()} title="Upload questions from a CSV file">
                                 Upload CSV
                             </button>
                             <button type="button" className="import-bank-btn" onClick={openQuestionBank}>
@@ -293,11 +293,13 @@ const AddQuestion = () => {
                         </div>
                     </div>
                     <form onSubmit={handleSubmit} className="form-group">
-                        <select value={questionType} onChange={(e) => setQuestionType(e.target.value)} className="admin-input" style={{ marginBottom: '10px' }}>
+                        <label className="authoring-label" htmlFor="question-type">Question format</label>
+                        <select id="question-type" value={questionType} onChange={(e) => setQuestionType(e.target.value)} className="admin-input">
                             <option value="mcq">Multiple Choice Question (MCQ)</option>
                             <option value="descriptive">Descriptive / Fill in the Blank</option>
                         </select>
                         <textarea 
+                            aria-label="Question text"
                             className="admin-input"
                             placeholder="Enter question text..."
                             required
@@ -306,10 +308,12 @@ const AddQuestion = () => {
                         />
                         {questionType === 'mcq' ? (
                             <>
-                                <input className="admin-input" type="text" placeholder="Option A" required value={questionData.option_a} onChange={(e) => setQuestionData({...questionData, option_a: e.target.value})} />
-                                <input className="admin-input" type="text" placeholder="Option B" required value={questionData.option_b} onChange={(e) => setQuestionData({...questionData, option_b: e.target.value})} />
-                                <input className="admin-input" type="text" placeholder="Option C" required value={questionData.option_c} onChange={(e) => setQuestionData({...questionData, option_c: e.target.value})} />
-                                <input className="admin-input" type="text" placeholder="Option D" required value={questionData.option_d} onChange={(e) => setQuestionData({...questionData, option_d: e.target.value})} />
+                                <div className="authoring-option-grid">
+                                    <label className="authoring-field"><span>Option A</span><input className="admin-input" type="text" required value={questionData.option_a} onChange={(e) => setQuestionData({...questionData, option_a: e.target.value})} /></label>
+                                    <label className="authoring-field"><span>Option B</span><input className="admin-input" type="text" required value={questionData.option_b} onChange={(e) => setQuestionData({...questionData, option_b: e.target.value})} /></label>
+                                    <label className="authoring-field"><span>Option C</span><input className="admin-input" type="text" required value={questionData.option_c} onChange={(e) => setQuestionData({...questionData, option_c: e.target.value})} /></label>
+                                    <label className="authoring-field"><span>Option D</span><input className="admin-input" type="text" required value={questionData.option_d} onChange={(e) => setQuestionData({...questionData, option_d: e.target.value})} /></label>
+                                </div>
                                 
                                 <div className="correct-ans-section">
                                     <label>Correct Answer:</label>
@@ -320,6 +324,8 @@ const AddQuestion = () => {
                                                 type="button" // Important: prevents form submission
                                                 className={`option-btn ${questionData.correct_option === opt ? 'active' : ''}`}
                                                 onClick={() => setQuestionData({ ...questionData, correct_option: opt })}
+                                                aria-pressed={questionData.correct_option === opt}
+                                                aria-label={`Mark option ${opt} as correct`}
                                             >
                                                 {opt}
                                             </button>
@@ -328,9 +334,10 @@ const AddQuestion = () => {
                                 </div>
                             </>
                         ) : (
-                            <div style={{ marginTop: '10px', textAlign: 'left' }}>
-                                <label className="bold-text">Correct Answer (Exact Match):</label>
+                            <div className="descriptive-answer-field">
+                                <label htmlFor="descriptive-answer" className="bold-text">Correct Answer (Exact Match)</label>
                                 <input 
+                                    id="descriptive-answer"
                                     className="admin-input" 
                                     type="text" 
                                     placeholder="Enter the exact correct answer" 
@@ -355,9 +362,9 @@ const AddQuestion = () => {
                 </div>
 
                 {/* --- Live Preview Table --- */}
-                <div className="preview-section">
-                    <h3>Exam Question Bank ({questionsList.length})</h3>
-                    <table className="preview-table">
+                <div className="preview-section authoring-preview">
+                    <div className="preview-heading"><h3>Exam Question Bank</h3><span>{questionsList.length} questions</span></div>
+                    <div className="authoring-table-wrap"><table className="preview-table">
                         <thead>
                             <tr>
                                 <th>No.</th>
@@ -367,6 +374,7 @@ const AddQuestion = () => {
                             </tr>
                         </thead>
                         <tbody>
+                            {questionsList.length === 0 && <tr><td colSpan="4" className="empty-table-cell">No questions added to this exam yet.</td></tr>}
                             {questionsList.map((q, index) => (
                                 <tr key={q._id || index}>
                                     <td>{index + 1}</td>
@@ -383,16 +391,18 @@ const AddQuestion = () => {
                                 </tr>
                             ))}
                         </tbody>
-                    </table>
+                    </table></div>
                 </div>
             </main>
 
             {/* Question Bank Modal */}
             {showBankModal && (
-                <div className="modal-overlay">
-                    <div className="modal-content review-modal-content" style={{ maxWidth: '800px' }}>
-                        <h2 className="review-modal-header">Question Bank</h2>
+                <div className="modal-overlay" role="presentation">
+                    <div className="modal-content review-modal-content question-bank-modal" role="dialog" aria-modal="true" aria-labelledby="question-bank-title">
+                        <h2 id="question-bank-title" className="review-modal-header">Question Bank</h2>
+                        <label className="authoring-label" htmlFor="question-bank-search">Search questions</label>
                         <input 
+                            id="question-bank-search"
                             type="text" 
                             className="admin-input admin-search-input" 
                             placeholder="Search questions by text..."
@@ -402,7 +412,7 @@ const AddQuestion = () => {
                                 setCurrentBankPage(1);
                             }}
                         />
-                        <table className="preview-table results-table">
+                        <div className="authoring-table-wrap bank-table-wrap"><table className="preview-table results-table">
                             <thead>
                                 <tr>
                                     <th>Question</th>
@@ -426,7 +436,7 @@ const AddQuestion = () => {
                                     <tr><td colSpan="4" className="empty-table-cell">No available questions found in the bank.</td></tr>
                                 )}
                             </tbody>
-                        </table>
+                        </table></div>
                         
                         {/* Question Bank Modal Pagination */}
                         {totalBankPages > 1 && (

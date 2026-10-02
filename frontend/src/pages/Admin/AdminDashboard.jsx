@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Edit, Trash2, Copy } from 'lucide-react'
+import { Edit, Trash2, Copy, ClipboardList, BarChart3, BookOpen, Users, Sun, Moon, LogOut, Plus } from 'lucide-react'
 import logo from "../../assets/logo.png";
 import api from "../../api/axios";
 import toast from 'react-hot-toast';
@@ -18,7 +18,8 @@ const formatDateTimeLocal = (dateStr) => {
 const AdminDashboard = () => {
     const navigate = useNavigate();
     const user = JSON.parse(localStorage.getItem("user") || "{}");
-    const adminName = user.name || "Admin"; 
+    const adminName = user.name || "Admin";
+    const currentUserId = user.id || user._id || "";
 
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [newExamTitle, setNewExamTitle] = useState("");
@@ -35,8 +36,8 @@ const AdminDashboard = () => {
     const [activeTab, setActiveTab] = useState("exams"); // 'exams', 'results', 'questionBank', or 'users'
     const [studentResults, setStudentResults] = useState([]);
     const [users, setUsers] = useState([]);
-    const [userSearchQuery, setUserSearchQuery] = useState("");
     const [searchQuery, setSearchQuery] = useState("");
+    const [userSearchQuery, setUserSearchQuery] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
     const resultsPerPage = 10;
     const [sortConfig, setSortConfig] = useState({ key: 'date', direction: 'desc' });
@@ -70,6 +71,18 @@ const AdminDashboard = () => {
             api.get('/exams/all-questions')
                .then(res => setQuestionBank(res.data))
                .catch(err => console.error("Error fetching question bank:", err));
+        }
+    }, [activeTab]);
+
+    // Fetch users when the Users tab is active
+    useEffect(() => {
+        if (activeTab === "users") {
+            api.get('/auth/users')
+               .then(res => setUsers(res.data))
+               .catch(err => {
+                    console.error("Error fetching users:", err);
+                    toast.error("Failed to load users.");
+               });
         }
     }, [activeTab]);
 
@@ -163,11 +176,10 @@ const AdminDashboard = () => {
         const newStatus = currentStatus === 'Published' ? 'Draft' : 'Published';
         try {
             const res = await api.put(`/exams/${examId}/status`, { status: newStatus });
-            // Update the specific exam's status in our state list
-            setMyExams(myExams.map(exam => exam._id === examId ? { ...exam, status: res.data.status } : exam));
+            setMyExams(prev => prev.map(exam => exam._id === examId ? { ...exam, status: res.data.status } : exam));
         } catch (error) {
             console.error("Error updating exam status:", error);
-            toast.error("Failed to update status");
+            toast.error(error.response?.data?.message || "Failed to update status");
         }
     };
 
@@ -318,6 +330,51 @@ const AdminDashboard = () => {
     const currentBankResults = filteredBank.slice(indexOfFirstBankResult, indexOfLastBankResult);
     const totalBankPages = Math.ceil(filteredBank.length / resultsPerPage);
 
+    const handleUpdateUserRole = async (userId, role) => {
+        if (!userId) return;
+
+        try {
+            const res = await api.put(`/auth/users/${userId}/role`, { role });
+            setUsers(prev => prev.map(u => u._id === userId ? { ...u, role: res.data.user.role } : u));
+            toast.success("User role updated successfully.");
+        } catch (error) {
+            console.error("Error updating user role:", error);
+            toast.error(error.response?.data?.message || "Failed to update user role.");
+        }
+    };
+
+    const handleDeleteUser = async (userId) => {
+        if (!userId) return;
+
+        if (userId === currentUserId) {
+            toast.error("You cannot delete your own admin account.");
+            return;
+        }
+
+        const confirmed = window.confirm("Are you sure you want to delete this user?");
+        if (!confirmed) return;
+
+        try {
+            await api.delete(`/auth/users/${userId}`);
+            setUsers(prev => prev.filter(u => u._id !== userId));
+            toast.success("User deleted successfully.");
+        } catch (error) {
+            console.error("Error deleting user:", error);
+            toast.error(error.response?.data?.message || "Failed to delete user.");
+        }
+    };
+
+    const filteredUsers = users.filter((userEntry) => {
+        const searchLower = userSearchQuery.toLowerCase();
+        const name = userEntry.name || "";
+        const email = userEntry.email || "";
+        const role = userEntry.role || "";
+
+        return name.toLowerCase().includes(searchLower)
+            || email.toLowerCase().includes(searchLower)
+            || role.toLowerCase().includes(searchLower);
+    });
+
     // Export sorted/filtered results to CSV
     const handleExportCSV = () => {
         if (sortedResults.length === 0) {
@@ -352,24 +409,39 @@ const AdminDashboard = () => {
 
     return (
         <div className="dashboard-wrapper">
-            <nav className="sidebar">  
+            <nav className="sidebar" aria-label="Admin navigation">
                 <div className="sidebar-header">
                     <img src={logo} alt="SecureExam Logo" className="sidebar-logo" />
                 </div>
                 <ul className="sidebar-menu">
-                    <li className={activeTab === "exams" ? "active" : ""} onClick={() => setActiveTab("exams")}>
-                        Manage Exams
+                    <li className={activeTab === "exams" ? "active" : ""}>
+                        <button type="button" onClick={() => setActiveTab("exams")} aria-current={activeTab === "exams" ? "page" : undefined}>
+                            <ClipboardList aria-hidden="true" /> <span>Manage Exams</span>
+                        </button>
                     </li>
-                    <li className={activeTab === "results" ? "active" : ""} onClick={() => setActiveTab("results")}>
-                        View Results
+                    <li className={activeTab === "results" ? "active" : ""}>
+                        <button type="button" onClick={() => setActiveTab("results")} aria-current={activeTab === "results" ? "page" : undefined}>
+                            <BarChart3 aria-hidden="true" /> <span>View Results</span>
+                        </button>
                     </li>
-                    <li className={activeTab === "questionBank" ? "active" : ""} onClick={() => setActiveTab("questionBank")}>
-                        Question Bank
+                    <li className={activeTab === "questionBank" ? "active" : ""}>
+                        <button type="button" onClick={() => setActiveTab("questionBank")} aria-current={activeTab === "questionBank" ? "page" : undefined}>
+                            <BookOpen aria-hidden="true" /> <span>Question Bank</span>
+                        </button>
                     </li>
-                    <li onClick={() => setDarkMode(!darkMode)} style={{ cursor: "pointer" }}>
-                        {darkMode ? "☀️ Light Mode" : "🌙 Dark Mode"}
+                    <li className={activeTab === "users" ? "active" : ""}>
+                        <button type="button" onClick={() => setActiveTab("users")} aria-current={activeTab === "users" ? "page" : undefined}>
+                            <Users aria-hidden="true" /> <span>Manage Users</span>
+                        </button>
                     </li>
-                    <li className="logout-item" onClick={handleLogout}>Logout</li>
+                    <li>
+                        <button type="button" onClick={() => setDarkMode(!darkMode)} aria-pressed={darkMode}>
+                            {darkMode ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />} <span>{darkMode ? "Light Mode" : "Dark Mode"}</span>
+                        </button>
+                    </li>
+                    <li className="logout-item">
+                        <button type="button" onClick={handleLogout}><LogOut aria-hidden="true" /> <span>Logout</span></button>
+                    </li>
                 </ul>
             </nav>
 
@@ -381,33 +453,46 @@ const AdminDashboard = () => {
                             <p>Manage your examination system and view student performance.</p>
                         </div>
                         <div className="admin-header">
-                            <h2>Your Exams</h2>
+                            <div>
+                                <h2>Your Exams</h2>
+                                <p className="section-count">{myExams.length} {myExams.length === 1 ? "exam" : "exams"}</p>
+                            </div>
                             <button className="create-exam-btn" onClick={() => setShowCreateModal(true)}>
-                                + Create New Exam
+                                <Plus size={17} aria-hidden="true" /> Create New Exam
                             </button>
                         </div>
                         <div className="exam-grid">
+                            {myExams.length === 0 && (
+                                <div className="empty-exams-state">
+                                    <ClipboardList aria-hidden="true" />
+                                    <h3>No exams yet</h3>
+                                    <p>Create your first exam to begin managing assessments.</p>
+                                    <button className="create-exam-btn" onClick={() => setShowCreateModal(true)}>
+                                        <Plus size={17} aria-hidden="true" /> Create New Exam
+                                    </button>
+                                </div>
+                            )}
                             {myExams.map(exam => (
                                 <div key={exam._id} className="exam-card">
                                     {/* Top Right Edit Icon */}
-                                    <button className="edit-icon-btn" onClick={() => openEditModal(exam)} title="Edit Exam Details">
+                                    <button className="edit-icon-btn" onClick={() => openEditModal(exam)} title="Edit exam details" aria-label={`Edit ${exam.title} details`}>
                                         <Edit size={16} />
                                     </button>
-                                    <button className="copy-icon-btn" onClick={() => handleDuplicateExam(exam._id)} title="Duplicate Exam">
+                                    <button className="copy-icon-btn" onClick={() => handleDuplicateExam(exam._id)} title="Duplicate exam" aria-label={`Duplicate ${exam.title}`}>
                                         <Copy size={16} />
                                     </button>
-                                    <button className="delete-icon-btn" onClick={() => handleDeleteExam(exam._id)} title="Delete Exam">
+                                    <button className="delete-icon-btn" onClick={() => handleDeleteExam(exam._id)} title="Delete exam" aria-label={`Delete ${exam.title}`}>
                                         <Trash2 size={16} />
                                     </button>
                                     
                                     <h3>{exam.title}</h3>
                                     <div className="exam-details">
-                                        <p>Questions: <strong>{exam.questions?.length || 0}</strong></p>
-                                        <p>Duration: <strong>{exam.duration} mins</strong></p>
-                                        <p>Status: <span className={`status-badge ${exam.status === 'Published' ? 'published' : 'draft'}`}>{exam.status}</span></p>
-                                        <p>Access Code: <strong>{exam.accessCode || "None"}</strong></p>
-                                        {exam.startTime && <p>Starts: <strong>{new Date(exam.startTime).toLocaleString()}</strong></p>}
-                                        {exam.endTime && <p>Ends: <strong>{new Date(exam.endTime).toLocaleString()}</strong></p>}
+                                        <p><span>Questions</span><strong>{exam.questions?.length || 0}</strong></p>
+                                        <p><span>Duration</span><strong>{exam.duration} mins</strong></p>
+                                        <p><span>Status</span><span className={`status-badge ${exam.status === 'Published' ? 'published' : 'draft'}`}>{exam.status}</span></p>
+                                        <p><span>Access code</span><strong>{exam.accessCode || "None"}</strong></p>
+                                        {exam.startTime && <p><span>Starts</span><strong>{new Date(exam.startTime).toLocaleString()}</strong></p>}
+                                        {exam.endTime && <p><span>Ends</span><strong>{new Date(exam.endTime).toLocaleString()}</strong></p>}
                                     </div>
                                     <p className="exam-description">{exam.description}</p>
                                     
@@ -440,9 +525,11 @@ const AdminDashboard = () => {
                                 Export CSV
                             </button>
                         </div>
+                        <label className="visually-hidden" htmlFor="results-search">Search student results</label>
                         <input 
                             type="text" 
                             className="admin-input admin-search-input" 
+                            id="results-search"
                             placeholder="Search by student name or email..."
                             value={searchQuery}
                             onChange={(e) => {
@@ -450,6 +537,7 @@ const AdminDashboard = () => {
                                 setCurrentPage(1); // Reset to page 1 on new search
                             }}
                         />
+                        <div className="table-scroll">
                         <table className="preview-table results-table">
                             <thead>
                                 <tr>
@@ -496,6 +584,7 @@ const AdminDashboard = () => {
                                 )}
                             </tbody>
                         </table>
+                        </div>
                         
                         {/* Pagination Controls */}
                         {totalPages > 1 && (
@@ -529,9 +618,11 @@ const AdminDashboard = () => {
                     <div className="results-section">
                         <h2>Central Question Bank</h2>
                         <p className="bank-info">This is an automated repository of all questions from every exam. To add questions here, simply add them to any exam!</p>
+                        <label className="visually-hidden" htmlFor="question-search">Search questions</label>
                         <input 
                             type="text" 
                             className="admin-input admin-search-input" 
+                            id="question-search"
                             placeholder="Search questions by text..."
                             value={searchBankQuery}
                             onChange={(e) => {
@@ -539,6 +630,7 @@ const AdminDashboard = () => {
                                 setCurrentBankPage(1);
                             }}
                         />
+                        <div className="table-scroll">
                         <table className="preview-table results-table">
                             <thead>
                                 <tr>
@@ -560,6 +652,7 @@ const AdminDashboard = () => {
                                 )}
                             </tbody>
                         </table>
+                        </div>
                         
                         {/* Question Bank Pagination Controls */}
                         {totalBankPages > 1 && (
@@ -588,64 +681,143 @@ const AdminDashboard = () => {
                         )}
                     </div>
                 )}
+
+                {activeTab === "users" && (
+                    <div className="results-section">
+                        <h2>Manage Users</h2>
+                        <label className="visually-hidden" htmlFor="user-search">Search users</label>
+                        <input
+                            type="text"
+                            className="admin-input admin-search-input"
+                            id="user-search"
+                            placeholder="Search by name, email, or role..."
+                            value={userSearchQuery}
+                            onChange={(e) => setUserSearchQuery(e.target.value)}
+                        />
+
+                        <div className="table-scroll">
+                        <table className="preview-table results-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                    <th>Verified</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {filteredUsers.map((userEntry) => (
+                                    <tr key={userEntry._id}>
+                                        <td>{userEntry.name || 'Unnamed User'}</td>
+                                        <td>{userEntry.email || 'N/A'}</td>
+                                        <td>
+                                            <select
+                                                value={userEntry.role || 'student'}
+                                                onChange={(e) => handleUpdateUserRole(userEntry._id, e.target.value)}
+                                                className="admin-input"
+                                                style={{ width: '120px', padding: '6px 8px', margin: 0 }}
+                                                disabled={userEntry._id === currentUserId}
+                                            >
+                                                <option value="student">Student</option>
+                                                <option value="admin">Admin</option>
+                                            </select>
+                                        </td>
+                                        <td>{userEntry.isVerified ? 'Yes' : 'No'}</td>
+                                        <td>{new Date(userEntry.createdAt).toLocaleString()}</td>
+                                        <td>
+                                            <button
+                                                className="table-review-btn"
+                                                style={{ backgroundColor: '#e74c3c' }}
+                                                onClick={() => handleDeleteUser(userEntry._id)}
+                                                disabled={userEntry._id === currentUserId}
+                                            >
+                                                Delete
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {filteredUsers.length === 0 && (
+                                    <tr>
+                                        <td colSpan="6" className="empty-table-cell">No users found.</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                        </div>
+                    </div>
+                )}
             </main>
 
             {/* Create Exam Modal */}
             {showCreateModal && (
                 <div className="modal-overlay">
-                    <div className="modal-content">
-                        <h2>Create New Exam</h2>
-                        <form onSubmit={handleCreateExam}>
-                            <input 
-                                type="text" 
-                                className="admin-input" 
-                                placeholder="Enter Exam Title (e.g. Java Quiz)"
-                                value={newExamTitle}
-                                onChange={(e) => setNewExamTitle(e.target.value)}
-                                required
-                                autoFocus
-                            />
-                            <textarea
-                                className="admin-input admin-textarea-ext"
-                                placeholder="Exam Description"
-                                value={newExamDescription}
-                                onChange={(e) => setNewExamDescription(e.target.value)}
-                            />
-                            <div className="duration-wrapper">
-                                <label>Duration (minutes): </label>
+                    <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="create-exam-title">
+                        <h2 id="create-exam-title">Create New Exam</h2>
+                        <form className="modal-form" onSubmit={handleCreateExam}>
+                            <div className="modal-field modal-field-wide">
+                                <label htmlFor="new-exam-title">Exam title</label>
+                                <input
+                                    type="text"
+                                    className="admin-input"
+                                    id="new-exam-title"
+                                    placeholder="Enter Exam Title (e.g. Java Quiz)"
+                                    value={newExamTitle}
+                                    onChange={(e) => setNewExamTitle(e.target.value)}
+                                    required
+                                    autoFocus
+                                />
+                            </div>
+                            <div className="modal-field modal-field-wide">
+                                <label htmlFor="new-exam-description">Description</label>
+                                <textarea
+                                    className="admin-input admin-textarea-ext"
+                                    id="new-exam-description"
+                                    placeholder="Exam Description"
+                                    value={newExamDescription}
+                                    onChange={(e) => setNewExamDescription(e.target.value)}
+                                />
+                            </div>
+                            <div className="duration-wrapper modal-field">
+                                <label htmlFor="new-exam-duration">Duration (minutes)</label>
                                 <input 
                                     type="number"
                                     className="admin-input duration-input" 
+                                    id="new-exam-duration"
                                     value={newExamDuration}
                                     onChange={(e) => setNewExamDuration(e.target.value)}
                                     min="1"
                                     required
                                 />
                             </div>
-                            <div style={{ marginTop: '10px' }}>
-                                <label>Access Code (Optional): </label>
+                            <div className="modal-field">
+                                <label htmlFor="new-exam-access-code">Access code (optional)</label>
                                 <input 
                                     type="text"
                                     className="admin-input" 
+                                    id="new-exam-access-code"
                                     placeholder="Leave blank for no password"
                                     value={newExamAccessCode}
                                     onChange={(e) => setNewExamAccessCode(e.target.value)}
                                 />
                             </div>
-                            <div style={{ marginTop: '10px' }}>
-                                <label>Start Time (Optional): </label>
+                            <div className="modal-field">
+                                <label htmlFor="new-exam-start-time">Start time (optional)</label>
                                 <input 
                                     type="datetime-local" 
                                     className="admin-input" 
+                                    id="new-exam-start-time"
                                     value={newExamStartTime}
                                     onChange={(e) => setNewExamStartTime(e.target.value)}
                                 />
                             </div>
-                            <div style={{ marginTop: '10px' }}>
-                                <label>End Time (Optional): </label>
+                            <div className="modal-field">
+                                <label htmlFor="new-exam-end-time">End time (optional)</label>
                                 <input 
                                     type="datetime-local" 
                                     className="admin-input" 
+                                    id="new-exam-end-time"
                                     value={newExamEndTime}
                                     onChange={(e) => setNewExamEndTime(e.target.value)}
                                 />
@@ -661,58 +833,70 @@ const AdminDashboard = () => {
         {/* Edit Exam Modal */}
         {showEditModal && (
             <div className="modal-overlay">
-                <div className="modal-content">
-                    <h2>Edit Exam Details</h2>
-                    <form onSubmit={handleUpdateExam}>
-                        <input 
-                            type="text" 
-                            className="admin-input" 
-                            placeholder="Enter Exam Title"
-                            value={editExamData.title}
-                            onChange={(e) => setEditExamData({...editExamData, title: e.target.value})}
-                            required
-                            autoFocus
-                        />
-                        <textarea
-                            className="admin-input admin-textarea-ext"
-                            placeholder="Exam Description"
-                            value={editExamData.description}
-                            onChange={(e) => setEditExamData({...editExamData, description: e.target.value})}
-                        />
-                        <div className="duration-wrapper">
-                            <label>Duration (minutes): </label>
+                <div className="modal-content" role="dialog" aria-modal="true" aria-labelledby="edit-exam-title">
+                    <h2 id="edit-exam-title">Edit Exam Details</h2>
+                    <form className="modal-form" onSubmit={handleUpdateExam}>
+                        <div className="modal-field modal-field-wide">
+                            <label htmlFor="edit-exam-title-input">Exam title</label>
+                            <input
+                                type="text"
+                                className="admin-input"
+                                id="edit-exam-title-input"
+                                placeholder="Enter Exam Title"
+                                value={editExamData.title}
+                                onChange={(e) => setEditExamData({...editExamData, title: e.target.value})}
+                                required
+                                autoFocus
+                            />
+                        </div>
+                        <div className="modal-field modal-field-wide">
+                            <label htmlFor="edit-exam-description">Description</label>
+                            <textarea
+                                className="admin-input admin-textarea-ext"
+                                id="edit-exam-description"
+                                placeholder="Exam Description"
+                                value={editExamData.description}
+                                onChange={(e) => setEditExamData({...editExamData, description: e.target.value})}
+                            />
+                        </div>
+                        <div className="duration-wrapper modal-field">
+                            <label htmlFor="edit-exam-duration">Duration (minutes)</label>
                             <input 
                                 type="number" 
                                 className="admin-input duration-input" 
+                                id="edit-exam-duration"
                                 value={editExamData.duration}
                                 onChange={(e) => setEditExamData({...editExamData, duration: e.target.value})}
                                 min="1"
                                 required
                             />
                         </div>
-                        <div style={{ marginTop: '10px' }}>
-                            <label>Access Code (Optional): </label>
+                        <div className="modal-field">
+                            <label htmlFor="edit-exam-access-code">Access code (optional)</label>
                             <input 
                                 type="text" 
                                 className="admin-input" 
+                                id="edit-exam-access-code"
                                 value={editExamData.accessCode}
                                 onChange={(e) => setEditExamData({...editExamData, accessCode: e.target.value})}
                             />
                         </div>
-                        <div style={{ marginTop: '10px' }}>
-                            <label>Start Time (Optional): </label>
+                        <div className="modal-field">
+                            <label htmlFor="edit-exam-start-time">Start time (optional)</label>
                             <input 
                                 type="datetime-local" 
                                 className="admin-input" 
+                                id="edit-exam-start-time"
                                 value={editExamData.startTime}
                                 onChange={(e) => setEditExamData({...editExamData, startTime: e.target.value})}
                             />
                         </div>
-                        <div style={{ marginTop: '10px' }}>
-                            <label>End Time (Optional): </label>
+                        <div className="modal-field">
+                            <label htmlFor="edit-exam-end-time">End time (optional)</label>
                             <input 
                                 type="datetime-local" 
                                 className="admin-input" 
+                                id="edit-exam-end-time"
                                 value={editExamData.endTime}
                                 onChange={(e) => setEditExamData({...editExamData, endTime: e.target.value})}
                             />
@@ -729,8 +913,8 @@ const AdminDashboard = () => {
         {/* Review Results Modal */}
         {viewResultDetails && (
             <div className="modal-overlay">
-                <div className="modal-content review-modal-content">
-                    <h2 className="review-modal-header">Review Answers: {viewResultDetails.studentId?.name || "Unknown"}</h2>
+                <div className="modal-content review-modal-content" role="dialog" aria-modal="true" aria-labelledby="review-result-title">
+                    <h2 id="review-result-title" className="review-modal-header">Review Answers: {viewResultDetails.studentId?.name || "Unknown"}</h2>
                     <p><strong>Exam:</strong> {viewResultDetails.examId?.title || "Deleted Exam"}</p>
                     
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
